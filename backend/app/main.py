@@ -9,17 +9,20 @@ from app.api.v1.router import api_router
 from app.sockets.manager import sio
 import app.sockets.events  # Register event handlers
 
-# Auto-create all SQLite tables on startup & auto-seed initial platform data
+# Auto-create all tables & seed demo data on every startup
 Base.metadata.create_all(bind=engine)
 
 try:
     from app.core.database import SessionLocal
-    from app.scripts.seed_data import seed_initial_data
+    from app.scripts.seed_data import seed_initial_data, reseed_all_existing_users
     _db = SessionLocal()
-    seed_initial_data(_db)
+    seed_initial_data(_db)       # Create demo users + group chats
+    reseed_all_existing_users(_db)  # Re-link contacts/chats for all existing real users
     _db.close()
 except Exception as _e:
+    import traceback
     print("Auto-seed on startup warning:", _e)
+    traceback.print_exc()
 
 
 fastapi_app = FastAPI(
