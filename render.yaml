@@ -1,16 +1,17 @@
 services:
-  # 1. FastAPI Backend Service
+  # Single Unified Service: Serves both Next.js Frontend and FastAPI Backend on 1 Single URL
   - type: web
-    name: signal-clone-backend
+    name: signal-clone
     env: python
     region: singapore
     plan: free
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    buildCommand: cd frontend && npm install && npm run build && cd ../backend && pip install -r requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: NODE_VERSION
+        value: 18.17.0
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
@@ -19,21 +20,3 @@ services:
         value: '["*"]'
       - key: PYTHONPATH
         value: .
-
-  # 2. Next.js Frontend Service
-  - type: web
-    name: signal-clone-frontend
-    env: node
-    region: singapore
-    plan: free
-    rootDir: frontend
-    buildCommand: npm install && npm run build
-    startCommand: npm start
-    envVars:
-      - key: NODE_VERSION
-        value: 18.17.0
-      - key: NEXT_PUBLIC_BACKEND_HOST
-        fromService:
-          type: web
-          name: signal-clone-backend
-          property: host

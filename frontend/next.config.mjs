@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     reactStrictMode: true,
+    output: 'export',
     async rewrites() {
         const rawHost = process.env.NEXT_PUBLIC_BACKEND_HOST;
         const hostUrl = rawHost ? (rawHost.startsWith('http') ? rawHost : `https://${rawHost}`) : null;
