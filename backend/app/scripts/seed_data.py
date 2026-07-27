@@ -5,7 +5,6 @@ from app.models.conversation import Conversation, ConversationType
 from app.models.participant import ConversationParticipant, ParticipantRole
 from app.models.message import Message, MessageType, MessageStatus
 from app.models.receipt import MessageReceipt, ReceiptStatus
-from datetime import datetime, timezone
 
 DEMO_USERS = [
     {
@@ -59,21 +58,20 @@ DEMO_USERS = [
 ]
 
 GREETINGS = {
-    "+15551234567": "Hey! Signal Core Security active 🔒",
-    "+15559876543": "Privacy advocate & dev online 🛡️",
-    "+15554567890": "Double ratchet key exchange verified 🔑",
-    "+15553332222": "Security audit clean! All systems clear 🔍",
-    "+15554445555": "Encrypted network tunnel operational ⚡",
-    "+15556667777": "Zero-knowledge proof confirmed 🌐",
-    "+15558889999": "Quantum-resistant encryption initialized ⚛️",
-    "+15550001111": "Welcome to Signal Messenger! Speak Freely ⚡"
+    "+15551234567": "Hey! Signal Core Security active 🔒 Your identity is verified.",
+    "+15559876543": "Privacy advocate here 🛡️ — all your messages are encrypted.",
+    "+15554567890": "Double ratchet key exchange complete 🔑 We can chat securely.",
+    "+15553332222": "Security audit clean — all systems go 🔍",
+    "+15554445555": "Encrypted tunnel operational ⚡ Connection secured.",
+    "+15556667777": "Zero-knowledge proof confirmed 🌐 Your data stays yours.",
+    "+15558889999": "Quantum-resistant encryption initialized ⚛️ Future-proof security!",
+    "+15550001111": "Welcome to Signal Messenger! 🔐 Speak freely — we've got your privacy covered."
 }
 
 
-def seed_initial_data(db: Session):
-    """Seed initial demo users and a sample group if DB has 0 users or demo users missing."""
-    print("Verifying platform demo users...")
-    created_users = []
+def _ensure_demo_users(db: Session):
+    """Creates any missing demo users in the DB. Returns list of all demo User objects."""
+    users = []
     for u_data in DEMO_USERS:
         u = db.query(User).filter(User.phone_number == u_data["phone_number"]).first()
         if not u:
@@ -87,24 +85,18 @@ def seed_initial_data(db: Session):
             db.add(u)
             db.commit()
             db.refresh(u)
-        created_users.append(u)
+        users.append(u)
+    return users
 
-    # Link demo contacts to each other
-    for i, u1 in enumerate(created_users):
-        for j, u2 in enumerate(created_users):
-            if i != j:
-                existing = db.query(Contact).filter(
-                    Contact.owner_id == u1.id,
-                    Contact.contact_user_id == u2.id
-                ).first()
-                if not existing:
-                    c = Contact(owner_id=u1.id, contact_user_id=u2.id, custom_name=u2.display_name)
-                    db.add(c)
-    db.commit()
 
-    # Create a demo group conversation if it doesn't exist
-    existing_group = db.query(Conversation).filter(Conversation.type == ConversationType.GROUP, Conversation.title == "Dev Core Team 🔒").first()
-    if not existing_group and len(created_users) >= 3:
+def _ensure_group_chat(db: Session, demo_users):
+    """Creates the Dev Core Team group chat if it doesn't exist yet."""
+    group_conv = db.query(Conversation).filter(
+        Conversation.type == ConversationType.GROUP,
+        Conversation.title == "Dev Core Team 🔒"
+    ).first()
+
+    if not group_conv:
         group_conv = Conversation(
             type=ConversationType.GROUP,
             title="Dev Core Team 🔒",
@@ -113,59 +105,81 @@ def seed_initial_data(db: Session):
         db.add(group_conv)
         db.flush()
 
-        p1 = ConversationParticipant(conversation_id=group_conv.id, user_id=created_users[0].id, role=ParticipantRole.ADMIN)
-        p2 = ConversationParticipant(conversation_id=group_conv.id, user_id=created_users[1].id, role=ParticipantRole.MEMBER)
-        p3 = ConversationParticipant(conversation_id=group_conv.id, user_id=created_users[2].id, role=ParticipantRole.MEMBER)
-        db.add_all([p1, p2, p3])
+        for i, u in enumerate(demo_users[:3]):
+            role = ParticipantRole.ADMIN if i == 0 else ParticipantRole.MEMBER
+            db.add(ConversationParticipant(conversation_id=group_conv.id, user_id=u.id, role=role))
         db.commit()
 
         msg = Message(
             conversation_id=group_conv.id,
-            sender_id=created_users[0].id,
-            content="Welcome to Signal Messenger! All messages are end-to-end encrypted.",
+            sender_id=demo_users[0].id,
+            content="Welcome to Signal Messenger! All messages are end-to-end encrypted. 🔒",
             message_type=MessageType.TEXT,
             status=MessageStatus.READ
         )
         db.add(msg)
         db.commit()
 
+    return group_conv
+
+
+def seed_initial_data(db: Session):
+    """Ensure all demo users and the group chat exist in DB."""
+    demo_users = _ensure_demo_users(db)
+    _ensure_group_chat(db, demo_users)
+
 
 def auto_add_contacts_for_user(db: Session, user: User):
-    """Automatically add existing demo/platform users as contacts & active conversations for any logging-in user."""
-    seed_initial_data(db)
+    """
+    Unconditionally ensures that the logged-in user:
+    1. Has all demo platform users as contacts
+    2. Has an active direct conversation with each demo user (with an initial greeting message)
+    3. Is a member of the Dev Core Team group chat
+    """
+    # Step 1: Make sure all demo users exist
+    demo_users = _ensure_demo_users(db)
+
+    # Step 2: Make sure the group chat exists
+    group_conv = _ensure_group_chat(db, demo_users)
+
     from app.crud.crud_conversation import get_or_create_direct_conversation, add_group_member
 
-    other_users = db.query(User).filter(User.id != user.id).all()
-    for o in other_users:
-        # 1. Ensure contact exists
-        existing = db.query(Contact).filter(
-            Contact.owner_id == user.id,
-            Contact.contact_user_id == o.id
-        ).first()
-        if not existing:
-            c = Contact(owner_id=user.id, contact_user_id=o.id, custom_name=o.display_name or o.phone_number)
-            db.add(c)
+    for demo_user in demo_users:
+        if demo_user.id == user.id:
+            continue
 
-        # 2. Ensure direct conversation & initial chat preview exists
-        conv = get_or_create_direct_conversation(db, user.id, o.id)
-        msg_count = db.query(Message).filter(Message.conversation_id == conv.id).count()
-        if msg_count == 0:
-            greeting_text = GREETINGS.get(o.phone_number, f"Hey there! I am using Signal.")
+        # Add contact (idempotent)
+        existing_contact = db.query(Contact).filter(
+            Contact.owner_id == user.id,
+            Contact.contact_user_id == demo_user.id
+        ).first()
+        if not existing_contact:
+            db.add(Contact(
+                owner_id=user.id,
+                contact_user_id=demo_user.id,
+                custom_name=demo_user.display_name
+            ))
+
+        # Create or get direct conversation
+        conv = get_or_create_direct_conversation(db, user.id, demo_user.id)
+
+        # Add initial greeting message if chat is empty
+        msg_exists = db.query(Message).filter(Message.conversation_id == conv.id).count()
+        if msg_exists == 0:
+            greeting = GREETINGS.get(demo_user.phone_number, "Hey there! I am using Signal.")
             msg = Message(
                 conversation_id=conv.id,
-                sender_id=o.id,
-                content=greeting_text,
+                sender_id=demo_user.id,
+                content=greeting,
                 message_type=MessageType.TEXT,
                 status=MessageStatus.READ
             )
             db.add(msg)
             db.flush()
-            r = MessageReceipt(message_id=msg.id, user_id=user.id, status=ReceiptStatus.READ)
-            db.add(r)
-
-    # 3. Ensure user is added to Dev Core Team group if present
-    group_conv = db.query(Conversation).filter(Conversation.type == ConversationType.GROUP, Conversation.title == "Dev Core Team 🔒").first()
-    if group_conv:
-        add_group_member(db, group_conv.id, user.id, ParticipantRole.MEMBER)
+            # Mark as read for the logged-in user
+            db.add(MessageReceipt(message_id=msg.id, user_id=user.id, status=ReceiptStatus.READ))
 
     db.commit()
+
+    # Step 3: Add user to group chat (idempotent)
+    add_group_member(db, group_conv.id, user.id, ParticipantRole.MEMBER)

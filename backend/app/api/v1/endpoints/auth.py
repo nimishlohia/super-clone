@@ -43,11 +43,14 @@ def verify_otp(payload: OTPVerifyRequest, db: Session = Depends(get_db)):
         user = crud_user.create_user(db, phone_number=payload.phone_number)
         is_new_user = True
 
+    # Always run on every login — ensures demo users, contacts, and conversations exist
+    import traceback
     try:
         from app.scripts.seed_data import auto_add_contacts_for_user
         auto_add_contacts_for_user(db, user)
-    except Exception as _e:
-        pass
+    except Exception as e:
+        print(f"[WARN] auto_add_contacts_for_user failed: {e}")
+        traceback.print_exc()
 
     access_token = create_access_token(subject=user.id)
 
