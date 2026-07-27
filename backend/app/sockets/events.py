@@ -49,6 +49,142 @@ RANDOM_BOT_CONTACTS = [
     "+919901234567", "+918001234567", "+918012345678", "+918056789012",
 ]
 
+# Keyword-based smart replies (checked against user's incoming message)
+SMART_REPLIES = [
+    (["hi", "hello", "hey", "heyy", "namaste", "hola"],
+     ["Heyyy! Kaisa hai? 😄", "Hello! Kya haal hai? 👋", "Namaste ji! 🙏 Bolo kya scene hai?", "Hiii! So good to hear from you! 😊"]),
+    (["kaise", "kaisa", "how are you", "sup", "what's up"],
+     ["Main bilkul mast hoon yaar! Tu bata? 😄", "Sab badhiya! Life is good 🙌", "Ekdum first class! Coffee pi raha tha abhi ☕"]),
+    (["kya kar", "what doing", "busy"],
+     ["Yaar abhi thoda kaam tha, par tere liye time hai! 😄", "Bas phone pe hi tha! Bata kya hua?", "Kuch khas nahi, tujhse baat karni thi 😊"]),
+    (["khana", "food", "lunch", "dinner", "biryani", "pizza", "chai", "coffee"],
+     ["Arrey bhai! Abhi khaya — bahut accha tha 😋", "Food ki baat mat karo yaar, bhookh lag gayi! 😂", "Haan yaar! Kal saath mein khate hain? 🍛"]),
+    (["plan", "weekend", "milte", "meet", "outing"],
+     ["Haan yaar! Pakka milte hain weekend pe 🙌", "Plan bana! Main ready hoon 🎉", "Saturday ya Sunday — teri choice! 😄"]),
+    (["work", "job", "office", "kaam"],
+     ["Bhai office ka stress mat le — chill kar 😅", "Aaj kaam toh ho gaya, ab life bhi jee le! 😄", "Main bhi kaam mein laga hoon — mushkil hai yaar!"]),
+    (["ok", "okay", "theek", "accha", "haan", "yes", "sure"],
+     ["👍", "Perfect! 😊", "Haan bilkul!", "Sahi hai yaar!"]),
+    (["bye", "tc", "take care", "alvida", "later"],
+     ["Bye yaar! Take care 🙏", "Phir milenge! 😊", "Alvida! Dhayn rakho apna ❤️"]),
+    (["love", "pyaar", "dil", "❤️", "😍"],
+     ["Awwww 🥹❤️", "Yaar! 😊 Tu bhi!", "Hehe you're the best yaar!"]),
+    (["thanks", "shukriya", "thank you", "ty"],
+     ["Koi baat nahi yaar! 🙏", "Always for you! 😊", "Arrey yaar — mention not! ❤️"]),
+]
+
+FALLBACK_REPLIES = [
+    "Haan yaar, sahi keh raha hai! 😄",
+    "Sach mein? Bata aur! 👀",
+    "Waah! Ekdum sahi 🙌",
+    "Haha bhai tu toh kamaal hai 😂",
+    "Acha acha, samajh gaya! 😊",
+    "Arre yaar interesting hai yeh! 💡",
+    "Haan bhai, main bhi yahi soch raha tha!",
+    "LOL 😂 Tu toh pagal hai!",
+    "Seriously?? Bata mujhe poora! 👀",
+    "❤️ Bahut accha laga sun ke!",
+    "Chalo yaar plan karte hain phir! 🎉",
+    "Main abhi free nahi tha — ab hoon! Bata kya hua?",
+    "Yaar tujhe pata hai tu best hai? 😄",
+    "Haan haan — aur phir kya hua?",
+    "😂😂 Classic!",
+]
+
+
+def _pick_reply(user_message: str, phone: str) -> str:
+    """Pick a contextually smart reply based on the user's message."""
+    msg_lower = user_message.lower()
+    for keywords, replies in SMART_REPLIES:
+        if any(k in msg_lower for k in keywords):
+            return random.choice(replies)
+    # Fall back to contact-specific reply pool or generic fallback
+    contact_pool = BOT_REPLIES.get(phone, [])
+    combined = contact_pool + FALLBACK_REPLIES
+    return random.choice(combined)
+
+
+async def _bot_auto_reply(bot_user_id: str, to_user_id: str, to_sid: str,
+                           conversation_id: str, user_message: str):
+    """Bot contact sends a contextually aware reply after a realistic typing delay."""
+    await asyncio.sleep(random.uniform(2.0, 5.0))
+
+    from app.sockets.manager import user_sockets
+    # Only reply if user is still connected
+    if to_sid not in user_sockets.get(to_user_id, set()):
+        return
+
+    db = SessionLocal()
+    try:
+        bot_user = crud_user.get_user_by_id(db, bot_user_id)
+        if not bot_user:
+            return
+
+        # Show typing indicator
+        typing_payload = {
+            "conversation_id": conversation_id,
+            "user_id": bot_user.id,
+            "is_typing": True
+        }
+        await sio.emit("typing:update", typing_payload, to=to_sid)
+        await asyncio.emit if False else None  # noop
+
+        # Typing duration (1–3 sec)
+        await asyncio.sleep(random.uniform(1.0, 3.0))
+        await sio.emit("typing:update", {**typing_payload, "is_typing": False}, to=to_sid)
+
+        # Pick smart reply
+        reply_text = _pick_reply(user_message, bot_user.phone_number)
+
+        # Save to DB
+        from app.models.receipt import MessageReceipt, ReceiptStatus
+        msg = crud_message.create_message(
+            db,
+            conversation_id=conversation_id,
+            sender_id=bot_user.id,
+            content=reply_text,
+            message_type=MessageType.TEXT
+        )
+        db.add(MessageReceipt(message_id=msg.id, user_id=to_user_id, status=ReceiptStatus.READ))
+
+        # Update conversation timestamp
+        conv = crud_conversation.get_conversation_by_id(db, conversation_id)
+        if conv:
+            conv.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        payload = {
+            "id": msg.id,
+            "temp_id": None,
+            "conversation_id": conversation_id,
+            "sender_id": bot_user.id,
+            "sender": {
+                "id": bot_user.id,
+                "display_name": bot_user.display_name,
+                "avatar_url": bot_user.avatar_url,
+                "phone_number": bot_user.phone_number,
+            },
+            "content": reply_text,
+            "message_type": "TEXT",
+            "status": "READ",
+            "created_at": msg.created_at.isoformat()
+        }
+
+        # Emit to user and the conversation room
+        await sio.emit("message:new", payload, to=to_sid)
+        await sio.emit("message:new", payload, room=conversation_id)
+        await sio.emit("receipt:update", {
+            "conversation_id": conversation_id,
+            "user_id": to_user_id,
+            "status": "READ",
+            "message_ids": [msg.id]
+        }, to=to_sid)
+
+    except Exception as e:
+        print(f"[BotReply] Error: {e}")
+    finally:
+        db.close()
+
 
 async def _send_bot_message(user_id: str, sid: str, delay: float):
     """Sends a bot message from a random contact to the user after `delay` seconds."""
@@ -303,8 +439,33 @@ async def message_send(sid, data):
                 "message_ids": [msg.id]
             }, room=conversation_id)
 
+        # --- BOT AUTO-REPLY ---
+        # If this is a direct conversation with a bot contact, schedule a reply
+        if conv and conv.type.value == "DIRECT":
+            from app.models.conversation import ConversationType
+            bot_participant_id = None
+            for participant in conv.participants:
+                if participant.user_id != sender_id:
+                    # Check if this participant is a demo bot
+                    other_user = crud_user.get_user_by_id(db, participant.user_id)
+                    if other_user and other_user.phone_number in BOT_REPLIES:
+                        bot_participant_id = other_user.id
+                        break
+
+            if bot_participant_id:
+                asyncio.ensure_future(
+                    _bot_auto_reply(
+                        bot_user_id=bot_participant_id,
+                        to_user_id=sender_id,
+                        to_sid=sid,
+                        conversation_id=conversation_id,
+                        user_message=content
+                    )
+                )
+
     finally:
         db.close()
+
 
 
 @sio.event
