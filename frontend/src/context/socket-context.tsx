@@ -15,7 +15,7 @@ export function SocketProvider({ children, token }: { children: React.ReactNode;
     const [connected, setConnected] = useState(false);
 
     useEffect(() => {
-        const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:8000';
+        const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? '' : 'http://localhost:8000');
         const socketInstance = io(socketUrl, {
             path: '/socket.io',
             auth: { token: `Bearer ${token}` },
