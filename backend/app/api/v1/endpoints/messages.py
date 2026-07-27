@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
@@ -43,3 +43,46 @@ def mark_conversation_read(
 ):
     updated_ids = crud_message.mark_messages_read(db, conversation_id=conversation_id, user_id=current_user_id)
     return {"message": "Messages marked as read", "updated_count": len(updated_ids)}
+
+
+from pydantic import BaseModel
+from datetime import timezone, datetime
+from app.crud import crud_conversation
+from app.models.message import MessageType
+
+class SendMessagePayload(BaseModel):
+    conversation_id: str
+    content: str
+    message_type: Optional[str] = "TEXT"
+
+
+@router.post("", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+def send_message_rest(
+    payload: SendMessagePayload,
+    current_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    msg = crud_message.create_message(
+        db,
+        conversation_id=payload.conversation_id,
+        sender_id=current_user_id,
+        content=payload.content,
+        message_type=MessageType.TEXT
+    )
+    
+    conv = crud_conversation.get_conversation_by_id(db, payload.conversation_id)
+    if conv:
+        conv.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+    msg_status = crud_message.get_message_status(msg, current_user_id)
+    return MessageResponse(
+        id=msg.id,
+        conversation_id=msg.conversation_id,
+        sender_id=msg.sender_id,
+        sender=msg.sender,
+        content=msg.content,
+        message_type=msg.message_type,
+        status=msg_status,
+        created_at=msg.created_at
+    )

@@ -9,8 +9,18 @@ from app.api.v1.router import api_router
 from app.sockets.manager import sio
 import app.sockets.events  # Register event handlers
 
-# Auto-create all SQLite tables on startup
+# Auto-create all SQLite tables on startup & auto-seed initial platform data
 Base.metadata.create_all(bind=engine)
+
+try:
+    from app.core.database import SessionLocal
+    from app.scripts.seed_data import seed_initial_data
+    _db = SessionLocal()
+    seed_initial_data(_db)
+    _db.close()
+except Exception as _e:
+    print("Auto-seed on startup warning:", _e)
+
 
 fastapi_app = FastAPI(
     title=settings.PROJECT_NAME,

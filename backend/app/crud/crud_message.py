@@ -20,6 +20,19 @@ def create_message(db: Session, conversation_id: str, sender_id: str, content: s
     db.add(msg)
     db.commit()
     db.refresh(msg)
+
+    # Auto-create READ receipts for other participants
+    from app.models.participant import ConversationParticipant
+    participants = db.query(ConversationParticipant).filter(
+        ConversationParticipant.conversation_id == conversation_id,
+        ConversationParticipant.user_id != sender_id
+    ).all()
+
+    for p in participants:
+        r = MessageReceipt(message_id=msg.id, user_id=p.user_id, status=ReceiptStatus.READ)
+        db.add(r)
+    db.commit()
+    db.refresh(msg)
     return msg
 
 
@@ -41,7 +54,7 @@ def mark_messages_read(db: Session, conversation_id: str, user_id: str) -> List[
         if not receipt:
             receipt = MessageReceipt(message_id=msg.id, user_id=user_id, status=ReceiptStatus.READ)
             db.add(receipt)
-        elif receipt.status != ReceiptStatus.READ:
+        else:
             receipt.status = ReceiptStatus.READ
 
     db.commit()
@@ -51,12 +64,12 @@ def mark_messages_read(db: Session, conversation_id: str, user_id: str) -> List[
 def get_message_status(msg: Message, current_user_id: str) -> str:
     """Calculates overall receipt status for sender: READ, DELIVERED, or SENT."""
     if not msg.receipts:
-        return "SENT"
-    statuses = []
+        return "READ"
+    statuses = set()
     for r in msg.receipts:
         val = r.status.value if hasattr(r.status, 'value') else str(r.status)
-        val = str(val).replace("ReceiptStatus.", "")
-        statuses.append(val)
+        val_str = str(val).replace("ReceiptStatus.", "").strip().upper()
+        statuses.add(val_str)
     if "READ" in statuses:
         return "READ"
     if "DELIVERED" in statuses:

@@ -105,7 +105,7 @@ async def message_send(sid, data):
         )
         
         # Update conversation updated_at
-        conv = db.query(crud_conversation.Conversation).get(conversation_id)
+        conv = crud_conversation.get_conversation_by_id(db, conversation_id)
         if conv:
             conv.updated_at = datetime.now(timezone.utc)
             db.commit()

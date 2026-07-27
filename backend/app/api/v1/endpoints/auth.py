@@ -43,6 +43,12 @@ def verify_otp(payload: OTPVerifyRequest, db: Session = Depends(get_db)):
         user = crud_user.create_user(db, phone_number=payload.phone_number)
         is_new_user = True
 
+    try:
+        from app.scripts.seed_data import auto_add_contacts_for_user
+        auto_add_contacts_for_user(db, user)
+    except Exception as _e:
+        pass
+
     access_token = create_access_token(subject=user.id)
 
     return TokenResponse(

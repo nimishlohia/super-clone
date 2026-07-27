@@ -103,6 +103,40 @@ export default function SignalDashboard() {
     const [addContactResults, setAddContactResults] = useState<any[]>([]);
     const [addContactMessage, setAddContactMessage] = useState('');
     const [savedContacts, setSavedContacts] = useState<any[]>([]);
+    const [addContactTab, setAddContactTab] = useState<'SEARCH' | 'CREATE'>('SEARCH');
+    const [customPhone, setCustomPhone] = useState('');
+    const [customName, setCustomName] = useState('');
+    const [customAbout, setCustomAbout] = useState('');
+    const [creatingCustomUser, setCreatingCustomUser] = useState(false);
+
+    const handleCreateCustomUser = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!customPhone.trim() || !customName.trim()) return;
+        setCreatingCustomUser(true);
+        setAddContactMessage('');
+        try {
+            const res = await apiClient.post('/contacts/custom', {
+                phone_number: customPhone.trim(),
+                display_name: customName.trim(),
+                about: customAbout.trim() || 'Hey there! I am using Signal.'
+            });
+            triggerToast(`Contact "${customName.trim()}" added`);
+            setAddContactMessage(`Added ${customName.trim()} to contacts`);
+            setShowAddContactModal(false);
+            setCustomPhone('');
+            setCustomName('');
+            setCustomAbout('');
+            fetchSavedContacts();
+            fetchConversations();
+            if (res.data?.contact_user?.id) {
+                startChat(res.data.contact_user.id);
+            }
+        } catch (err: any) {
+            setAddContactMessage(err.response?.data?.detail || 'Failed to create custom contact');
+        } finally {
+            setCreatingCustomUser(false);
+        }
+    };
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -283,9 +317,9 @@ export default function SignalDashboard() {
         typingRef.current = setTimeout(() => socket.emit('typing_stop', { conversation_id: activeConv.id }), 2000);
     };
 
-    const handleSend = (e?: React.FormEvent) => {
+    const handleSend = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
-        if (!inputMessage.trim() || !activeConv || !socket) return;
+        if (!inputMessage.trim() || !activeConv) return;
         
         const text = inputMessage.trim();
         const tempId = `tmp-${Date.now()}`;
@@ -296,18 +330,29 @@ export default function SignalDashboard() {
             sender_id: user?.id || '',
             content: text,
             message_type: 'TEXT',
-            status: 'SENDING',
+            status: 'SENT',
             created_at: new Date().toISOString()
         };
         
         setMessages(p => [...p, newMsg]);
         scrollToBottom();
 
-        socket.emit('message_send', { conversation_id: activeConv.id, content: text, temp_id: tempId });
         setInputMessage('');
         setShowEmojiPicker(false);
-        if (typingRef.current) clearTimeout(typingRef.current);
-        socket.emit('typing_stop', { conversation_id: activeConv.id });
+
+        if (socket && socket.connected) {
+            socket.emit('message_send', { conversation_id: activeConv.id, content: text, temp_id: tempId });
+            if (typingRef.current) clearTimeout(typingRef.current);
+            socket.emit('typing_stop', { conversation_id: activeConv.id });
+        } else {
+            try {
+                const res = await apiClient.post('/messages', { conversation_id: activeConv.id, content: text });
+                setMessages(p => p.map(m => m.id === tempId ? { ...res.data, status: 'SENT' } : m));
+                fetchConversations();
+            } catch (err) {
+                console.error("REST message send error:", err);
+            }
+        }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1022,36 +1067,123 @@ export default function SignalDashboard() {
                                 {addContactMessage}
                             </div>
                         )}
-                        <div style={{ position: 'relative', marginBottom: 14 }}>
-                            <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.muted }} />
-                            <input
-                                type="text"
-                                placeholder="Search by name or phone number..."
-                                value={addContactQuery}
-                                onChange={e => handleAddContactSearch(e.target.value)}
-                                style={{ width: '100%', background: C.input, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px 10px 36px', color: C.text, fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: C.font }}
-                            />
+                        {/* Tabs */}
+                        <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: `1px solid ${C.border}`, paddingBottom: 8 }}>
+                            <button
+                                type="button"
+                                onClick={() => setAddContactTab('SEARCH')}
+                                style={{
+                                    flex: 1, padding: '6px 0', borderRadius: 8, border: 'none',
+                                    background: addContactTab === 'SEARCH' ? C.blue : (isLight ? '#E5E5EA' : '#252628'),
+                                    color: addContactTab === 'SEARCH' ? '#fff' : C.sub,
+                                    fontSize: 12, fontWeight: 600, cursor: 'pointer'
+                                }}
+                            >
+                                Search Users
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setAddContactTab('CREATE')}
+                                style={{
+                                    flex: 1, padding: '6px 0', borderRadius: 8, border: 'none',
+                                    background: addContactTab === 'CREATE' ? C.blue : (isLight ? '#E5E5EA' : '#252628'),
+                                    color: addContactTab === 'CREATE' ? '#fff' : C.sub,
+                                    fontSize: 12, fontWeight: 600, cursor: 'pointer'
+                                }}
+                            >
+                                + Custom User
+                            </button>
                         </div>
-                        {addContactResults.length > 0 && (
-                            <div style={{ background: C.input, borderRadius: 10, maxHeight: 180, overflowY: 'auto', padding: 4 }}>
-                                {addContactResults.map(u => (
-                                    <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: 8 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <Avatar name={u.display_name || u.phone_number} size={30} isLight={isLight} />
-                                            <div>
-                                                <p style={{ margin: 0, fontSize: 13, color: C.text, fontWeight: 600 }}>{u.display_name || u.phone_number}</p>
-                                                <p style={{ margin: 0, fontSize: 11, color: C.muted }}>{u.phone_number}</p>
+
+                        {addContactTab === 'SEARCH' ? (
+                            <>
+                                <div style={{ position: 'relative', marginBottom: 14 }}>
+                                    <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.muted }} />
+                                    <input
+                                        type="text"
+                                        placeholder="Search by name or phone number..."
+                                        value={addContactQuery}
+                                        onChange={e => handleAddContactSearch(e.target.value)}
+                                        style={{ width: '100%', background: C.input, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px 10px 36px', color: C.text, fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: C.font }}
+                                    />
+                                </div>
+                                {addContactResults.length > 0 && (
+                                    <div style={{ background: C.input, borderRadius: 10, maxHeight: 180, overflowY: 'auto', padding: 4 }}>
+                                        {addContactResults.map(u => (
+                                            <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: 8 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                    <Avatar name={u.display_name || u.phone_number} size={30} isLight={isLight} />
+                                                    <div>
+                                                        <p style={{ margin: 0, fontSize: 13, color: C.text, fontWeight: 600 }}>{u.display_name || u.phone_number}</p>
+                                                        <p style={{ margin: 0, fontSize: 11, color: C.muted }}>{u.phone_number}</p>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => handleAddContact(u.id)}
+                                                    style={{ background: C.blue, color: '#fff', border: 'none', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                                                >
+                                                    Add
+                                                </button>
                                             </div>
-                                        </div>
-                                        <button
-                                            onClick={() => handleAddContact(u.id)}
-                                            style={{ background: C.blue, color: '#fff', border: 'none', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                                        >
-                                            Add
-                                        </button>
+                                        ))}
                                     </div>
-                                ))}
-                            </div>
+                                )}
+                            </>
+                        ) : (
+                            <form onSubmit={handleCreateCustomUser} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: C.sub, marginBottom: 4 }}>Phone Number</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. +1 999 888 7777"
+                                        value={customPhone}
+                                        onChange={e => setCustomPhone(e.target.value)}
+                                        required
+                                        style={{ width: '100%', background: C.input, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', color: C.text, fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: C.font }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: C.sub, marginBottom: 4 }}>Display Name</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. Sarah Connor"
+                                        value={customName}
+                                        onChange={e => setCustomName(e.target.value)}
+                                        required
+                                        style={{ width: '100%', background: C.input, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', color: C.text, fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: C.font }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: C.sub, marginBottom: 4 }}>About / Status (Optional)</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. Security Specialist 🛡️"
+                                        value={customAbout}
+                                        onChange={e => setCustomAbout(e.target.value)}
+                                        style={{ width: '100%', background: C.input, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', color: C.text, fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: C.font }}
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={creatingCustomUser || !customPhone.trim() || !customName.trim()}
+                                    style={{
+                                        marginTop: 4,
+                                        width: '100%',
+                                        padding: '10px 0',
+                                        borderRadius: 10,
+                                        border: 'none',
+                                        background: C.blue,
+                                        color: '#fff',
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        fontFamily: C.font,
+                                        opacity: (!customPhone.trim() || !customName.trim() || creatingCustomUser) ? 0.6 : 1
+                                    }}
+                                >
+                                    {creatingCustomUser ? 'Adding...' : 'Add Custom Contact'}
+                                </button>
+                            </form>
                         )}
                     </div>
                 </div>
