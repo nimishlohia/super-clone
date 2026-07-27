@@ -3,9 +3,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.database import Base, engine
+import app.models  # Register all database models
 from app.api.v1.router import api_router
 from app.sockets.manager import sio
 import app.sockets.events  # Register event handlers
+
+# Auto-create all SQLite tables on startup
+Base.metadata.create_all(bind=engine)
 
 fastapi_app = FastAPI(
     title=settings.PROJECT_NAME,
