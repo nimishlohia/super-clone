@@ -3,7 +3,7 @@ from app.models.user import User
 from app.models.contact import Contact
 from app.models.conversation import Conversation, ConversationType
 from app.models.participant import ConversationParticipant, ParticipantRole
-from app.models.message import Message, MessageType, MessageStatus
+from app.models.message import Message, MessageType
 from app.models.receipt import MessageReceipt, ReceiptStatus
 
 DEMO_USERS = [
@@ -114,8 +114,7 @@ def _ensure_group_chat(db: Session, demo_users):
             conversation_id=group_conv.id,
             sender_id=demo_users[0].id,
             content="Welcome to Signal Messenger! All messages are end-to-end encrypted. 🔒",
-            message_type=MessageType.TEXT,
-            status=MessageStatus.READ
+            message_type=MessageType.TEXT
         )
         db.add(msg)
         db.commit()
@@ -133,13 +132,10 @@ def auto_add_contacts_for_user(db: Session, user: User):
     """
     Unconditionally ensures that the logged-in user:
     1. Has all demo platform users as contacts
-    2. Has an active direct conversation with each demo user (with an initial greeting message)
+    2. Has an active direct conversation with each demo user (with an initial greeting)
     3. Is a member of the Dev Core Team group chat
     """
-    # Step 1: Make sure all demo users exist
     demo_users = _ensure_demo_users(db)
-
-    # Step 2: Make sure the group chat exists
     group_conv = _ensure_group_chat(db, demo_users)
 
     from app.crud.crud_conversation import get_or_create_direct_conversation, add_group_member
@@ -148,7 +144,7 @@ def auto_add_contacts_for_user(db: Session, user: User):
         if demo_user.id == user.id:
             continue
 
-        # Add contact (idempotent)
+        # Add contact if missing (idempotent)
         existing_contact = db.query(Contact).filter(
             Contact.owner_id == user.id,
             Contact.contact_user_id == demo_user.id
@@ -163,7 +159,7 @@ def auto_add_contacts_for_user(db: Session, user: User):
         # Create or get direct conversation
         conv = get_or_create_direct_conversation(db, user.id, demo_user.id)
 
-        # Add initial greeting message if chat is empty
+        # Add greeting message only if chat is completely empty
         msg_exists = db.query(Message).filter(Message.conversation_id == conv.id).count()
         if msg_exists == 0:
             greeting = GREETINGS.get(demo_user.phone_number, "Hey there! I am using Signal.")
@@ -171,15 +167,13 @@ def auto_add_contacts_for_user(db: Session, user: User):
                 conversation_id=conv.id,
                 sender_id=demo_user.id,
                 content=greeting,
-                message_type=MessageType.TEXT,
-                status=MessageStatus.READ
+                message_type=MessageType.TEXT
             )
             db.add(msg)
             db.flush()
-            # Mark as read for the logged-in user
             db.add(MessageReceipt(message_id=msg.id, user_id=user.id, status=ReceiptStatus.READ))
 
     db.commit()
 
-    # Step 3: Add user to group chat (idempotent)
+    # Add user to group chat (idempotent)
     add_group_member(db, group_conv.id, user.id, ParticipantRole.MEMBER)
