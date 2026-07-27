@@ -402,13 +402,20 @@ def auto_add_contacts_for_user(db: Session, user: User):
                 )
                 db.add(msg)
                 db.flush()
-                # Mark incoming messages as READ for the user
+                # Mark incoming messages as READ for the user (upsert to avoid UNIQUE conflict)
                 if from_contact:
-                    db.add(MessageReceipt(
-                        message_id=msg.id,
-                        user_id=user.id,
-                        status=ReceiptStatus.READ
-                    ))
+                    existing_r = db.query(MessageReceipt).filter(
+                        MessageReceipt.message_id == msg.id,
+                        MessageReceipt.user_id == user.id
+                    ).first()
+                    if existing_r:
+                        existing_r.status = ReceiptStatus.READ
+                    else:
+                        db.add(MessageReceipt(
+                            message_id=msg.id,
+                            user_id=user.id,
+                            status=ReceiptStatus.READ
+                        ))
 
     db.commit()
 

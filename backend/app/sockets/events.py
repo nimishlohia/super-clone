@@ -145,7 +145,15 @@ async def _bot_auto_reply(bot_user_id: str, to_user_id: str, to_sid: str,
             content=reply_text,
             message_type=MessageType.TEXT
         )
-        db.add(MessageReceipt(message_id=msg.id, user_id=to_user_id, status=ReceiptStatus.READ))
+        # create_message may have already created a receipt — upsert safely
+        existing_r = db.query(MessageReceipt).filter(
+            MessageReceipt.message_id == msg.id,
+            MessageReceipt.user_id == to_user_id
+        ).first()
+        if existing_r:
+            existing_r.status = ReceiptStatus.READ
+        else:
+            db.add(MessageReceipt(message_id=msg.id, user_id=to_user_id, status=ReceiptStatus.READ))
 
         # Update conversation timestamp
         conv = crud_conversation.get_conversation_by_id(db, conversation_id)
