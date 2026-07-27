@@ -58,6 +58,17 @@ DEMO_USERS = [
     }
 ]
 
+GREETINGS = {
+    "+15551234567": "Hey! Signal Core Security active 🔒",
+    "+15559876543": "Privacy advocate & dev online 🛡️",
+    "+15554567890": "Double ratchet key exchange verified 🔑",
+    "+15553332222": "Security audit clean! All systems clear 🔍",
+    "+15554445555": "Encrypted network tunnel operational ⚡",
+    "+15556667777": "Zero-knowledge proof confirmed 🌐",
+    "+15558889999": "Quantum-resistant encryption initialized ⚛️",
+    "+15550001111": "Welcome to Signal Messenger! Speak Freely ⚡"
+}
+
 
 def seed_initial_data(db: Session):
     """Seed initial demo users and a sample group if DB has 0 users or demo users missing."""
@@ -120,10 +131,13 @@ def seed_initial_data(db: Session):
 
 
 def auto_add_contacts_for_user(db: Session, user: User):
-    """Automatically add existing demo/platform users as contacts for a newly registered or logging-in user."""
+    """Automatically add existing demo/platform users as contacts & active conversations for any logging-in user."""
     seed_initial_data(db)
+    from app.crud.crud_conversation import get_or_create_direct_conversation, add_group_member
+
     other_users = db.query(User).filter(User.id != user.id).all()
     for o in other_users:
+        # 1. Ensure contact exists
         existing = db.query(Contact).filter(
             Contact.owner_id == user.id,
             Contact.contact_user_id == o.id
@@ -131,19 +145,16 @@ def auto_add_contacts_for_user(db: Session, user: User):
         if not existing:
             c = Contact(owner_id=user.id, contact_user_id=o.id, custom_name=o.display_name or o.phone_number)
             db.add(c)
-    db.commit()
 
-    # Also auto-create initial welcome conversation with Alice Sentinel & Signal Protocol Assistant
-    from app.crud.crud_conversation import get_or_create_direct_conversation
-    alice = db.query(User).filter(User.phone_number == "+15551234567").first()
-    if alice and alice.id != user.id:
-        conv = get_or_create_direct_conversation(db, user.id, alice.id)
+        # 2. Ensure direct conversation & initial chat preview exists
+        conv = get_or_create_direct_conversation(db, user.id, o.id)
         msg_count = db.query(Message).filter(Message.conversation_id == conv.id).count()
         if msg_count == 0:
+            greeting_text = GREETINGS.get(o.phone_number, f"Hey there! I am using Signal.")
             msg = Message(
                 conversation_id=conv.id,
-                sender_id=alice.id,
-                content="Hey there! Welcome to Signal. Your communications are end-to-end encrypted.",
+                sender_id=o.id,
+                content=greeting_text,
                 message_type=MessageType.TEXT,
                 status=MessageStatus.READ
             )
@@ -151,4 +162,10 @@ def auto_add_contacts_for_user(db: Session, user: User):
             db.flush()
             r = MessageReceipt(message_id=msg.id, user_id=user.id, status=ReceiptStatus.READ)
             db.add(r)
-            db.commit()
+
+    # 3. Ensure user is added to Dev Core Team group if present
+    group_conv = db.query(Conversation).filter(Conversation.type == ConversationType.GROUP, Conversation.title == "Dev Core Team 🔒").first()
+    if group_conv:
+        add_group_member(db, group_conv.id, user.id, ParticipantRole.MEMBER)
+
+    db.commit()

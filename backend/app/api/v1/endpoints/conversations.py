@@ -13,6 +13,13 @@ router = APIRouter()
 @router.get("", response_model=List[ConversationResponse])
 def list_conversations(current_user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)):
     convs = crud_conversation.get_user_conversations(db, user_id=current_user_id)
+    if not convs:
+        from app.crud import crud_user
+        from app.scripts.seed_data import auto_add_contacts_for_user
+        user = crud_user.get_user_by_id(db, user_id=current_user_id)
+        if user:
+            auto_add_contacts_for_user(db, user)
+            convs = crud_conversation.get_user_conversations(db, user_id=current_user_id)
     result = []
     for conv in convs:
         sorted_messages = sorted(conv.messages, key=lambda m: m.created_at) if conv.messages else []
